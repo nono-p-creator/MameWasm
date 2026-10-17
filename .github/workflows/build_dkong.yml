@@ -24,34 +24,55 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make gcc g++ git ninja-build python3
 
-      - name: Recuperer les sources MAME 0.289
+      - name: Recuperer MAME 0.289
         run: git clone --depth 1 --branch mame0289 https://github.com/mamedev/mame.git mame
 
-      - name: Preparer les outils de MAME
+      - name: Corriger la generation pour le pilote dkong
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('build-linux.ps1')
+          text = p.read_text(encoding='utf-8')
+          old = 'make generate TARGET=$Target SUBTARGET=$Subtarget IGNORE_GIT=1 DEBUG=$MameDebug'
+          new = 'make generate TARGET=$Target SUBTARGET=$Subtarget SOURCES=$Sources REGENIE=1 IGNORE_GIT=1 DEBUG=$MameDebug'
+          if text.count(old) != 1:
+              raise SystemExit('ERREUR : commande de generation introuvable ou ambigue')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          print('Generation personnalisee SOURCES et REGENIE activee')
+          PY
+
+      - name: Preparer les outils MAME
         run: make -C mame -j2 genie
 
-      - name: Compiler le pilote Donkey Kong
+      - name: Compiler Donkey Kong dans un sous-programme distinct
         shell: pwsh
-        run: ./build-linux.ps1 -Target mame -Subtarget tiny -Sources src/mame/nintendo/dkong.cpp -NoDebug
+        run: ./build-linux.ps1 -Target mame -Subtarget dkongweb -Sources src/mame/nintendo/dkong.cpp -NoDebug
 
-      - name: Rassembler les fichiers compiles
+      - name: Verifier les fichiers et le pilote dkong
         shell: bash
         run: |
           set -euo pipefail
+          echo 'Recherche du pilote dans les listes generees par MAME :'
+          find mame/build -type f -name 'drivlist.cpp' -print
+          if ! find mame/build -type f -name 'drivlist.cpp' -print0 | xargs -0 -r grep -lE '\bdkong\b' ; then
+            echo 'ERREUR : dkong absent des listes de pilotes generees.'
+            exit 1
+          fi
+          echo 'Pilote dkong detecte dans une liste generee.'
           mkdir -p artifact
-          js=$(find mame . -type f -name 'mametiny.js' -print -quit)
-          wasm=$(find mame . -type f -name 'mametiny.wasm' -print -quit)
+          js=$(find mame . -type f -name 'mamedkongweb.js' -print -quit)
+          wasm=$(find mame . -type f -name 'mamedkongweb.wasm' -print -quit)
           if [[ -z "$js" || -z "$wasm" ]]; then
-            echo 'Erreur : fichiers mametiny.js et mametiny.wasm absents.'
+            echo 'ERREUR : fichiers mamedkongweb.js et mamedkongweb.wasm absents.'
             exit 1
           fi
           cp "$js" "$wasm" artifact/
-          echo "Fichiers rassembles :"
           ls -lh artifact/
 
-      - name: Telecharger les fichiers construits
+      - name: Conserver les fichiers compiles
         uses: actions/upload-artifact@v4
         with:
-          name: mame-dkong-webassembly
+          name: mame-dkong-webassembly-v2
           path: artifact/
           if-no-files-found: error
