@@ -1,0 +1,67 @@
+name: MAME officiel - Donkey Kong 1981
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mame-dkong:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Installer Emscripten
+        uses: emscripten-core/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Installer les dependances Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 git make pkg-config libfontconfig1-dev
+
+      - name: Recuperer MAME 0.289 officiel
+        run: |
+          git clone --depth 1 --branch mame0289 https://github.com/mamedev/mame.git mame
+          test -f mame/src/mame/nintendo/dkong.cpp
+
+      - name: Preparer SDL pour Emscripten
+        run: |
+          embuilder build sdl3 sdl3_ttf
+
+      - name: Compiler MAME avec la methode officielle SOURCES
+        working-directory: mame
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Commande officielle : emmake make SUBTARGET=dkongweb SOURCES=src/mame/nintendo/dkong.cpp REGENIE=1 -j2'
+          emmake make SUBTARGET=dkongweb SOURCES=src/mame/nintendo/dkong.cpp REGENIE=1 -j2
+
+      - name: Trouver les fichiers et verifier le pilote
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Listes de pilotes generees :'
+          find mame -type f -name 'drivlist.cpp' -print
+          echo 'Verification du pilote dkong dans les listes generees :'
+          if ! find mame -type f -name 'drivlist.cpp' -exec grep -lE '(^|[^[:alnum:]_])dkong([^[:alnum:]_]|$)' {} +; then
+            echo 'ERREUR : dkong non trouve dans les listes generees.'
+            exit 1
+          fi
+          mkdir -p artifact
+          echo 'Recherche des fichiers JavaScript et WebAssembly :'
+          find mame -type f \( -name '*dkongweb*.js' -o -name '*dkongweb*.wasm' \) -print
+          js=$(find mame -type f -name '*dkongweb*.js' -print -quit)
+          wasm=$(find mame -type f -name '*dkongweb*.wasm' -print -quit)
+          test -n "$js" || { echo 'ERREUR : JavaScript du moteur absent.'; exit 1; }
+          test -n "$wasm" || { echo 'ERREUR : WebAssembly du moteur absent.'; exit 1; }
+          cp "$js" "$wasm" artifact/
+          ls -lh artifact/
+
+      - name: Publier le moteur compile
+        uses: actions/upload-artifact@v4
+        with:
+          name: mame-officiel-dkong-1981
+          path: artifact/
+          if-no-files-found: error
