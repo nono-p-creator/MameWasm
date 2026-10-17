@@ -1,0 +1,57 @@
+name: Construire MAME Donkey Kong 1981
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-dkong:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Recuperer MameWasm
+        uses: actions/checkout@v4
+
+      - name: Installer Emscripten
+        uses: emscripten-core/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Installer les outils Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make gcc g++ git ninja-build python3
+
+      - name: Recuperer les sources MAME 0.289
+        run: git clone --depth 1 --branch mame0289 https://github.com/mamedev/mame.git mame
+
+      - name: Preparer les outils de MAME
+        run: make -C mame -j2 genie
+
+      - name: Compiler le pilote Donkey Kong
+        shell: pwsh
+        run: ./build-linux.ps1 -Target mame -Subtarget tiny -Sources src/mame/nintendo/dkong.cpp -NoDebug
+
+      - name: Rassembler les fichiers compiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          js=$(find mame . -type f -name 'mametiny.js' -print -quit)
+          wasm=$(find mame . -type f -name 'mametiny.wasm' -print -quit)
+          if [[ -z "$js" || -z "$wasm" ]]; then
+            echo 'Erreur : fichiers mametiny.js et mametiny.wasm absents.'
+            exit 1
+          fi
+          cp "$js" "$wasm" artifact/
+          echo "Fichiers rassembles :"
+          ls -lh artifact/
+
+      - name: Telecharger les fichiers construits
+        uses: actions/upload-artifact@v4
+        with:
+          name: mame-dkong-webassembly
+          path: artifact/
+          if-no-files-found: error
